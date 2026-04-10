@@ -22,10 +22,9 @@ async def github_login():
 @router.get("/github/callback", response_model=Token)
 async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
     token_data = await github_service.get_access_token(code)
-    logger.info(f"Token data: {token_data}")
+    print("token_data", token_data)
     access_token = token_data.get("access_token")
-    logger.info(f"Access token: {access_token}")
-
+    print("access_token", access_token)
     if not access_token:
         raise HTTPException(
             status_code=400, detail="Failed to retrieve access token from GitHub"
@@ -33,7 +32,7 @@ async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
 
     # Validate that required scopes were granted
     granted_scopes = token_data.get("scope", "").split(",")
-    logger.info(f"Granted scopes: {granted_scopes}")
+    print("granted_scopes", granted_scopes)
     if "repo" not in granted_scopes:
         raise HTTPException(
             status_code=400,
@@ -41,8 +40,7 @@ async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
         )
 
     github_user = await github_service.get_user_profile(access_token)
-    logger.info(f"GitHub user: {github_user}")
+    print("github_user", github_user)
     jwt_token = await auth_service.authenticate_github_user(db, github_user, token_data)
-    logger.info(f"JWT token: {jwt_token}")
-
+    print("jwt_token", jwt_token)
     return {"access_token": jwt_token, "token_type": "bearer"}
