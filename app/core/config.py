@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     REDIS_PORT: int
     REDIS_DB: int
 
+    # AI Settings
+    GEMINI_API_KEY: Optional[str] = None
+    AI_MODEL: str = "gemini-1.5-flash"
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
 

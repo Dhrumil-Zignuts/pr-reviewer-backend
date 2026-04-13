@@ -5,6 +5,8 @@ from app.models.base import Base
 
 # Import all models
 from app.models.user import User
+from app.models.analysis import Analysis, AnalysisReview
+from app.models.user_system_prompt import UserSystemPrompt
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

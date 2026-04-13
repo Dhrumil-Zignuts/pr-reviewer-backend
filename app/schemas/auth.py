@@ -16,3 +16,7 @@ class GitHubUser(BaseModel):
     login: str
     email: Optional[str] = None
     avatar_url: Optional[str] = None
+
+
+class GitHubTokenLoginRequest(BaseModel):
+    github_token: str

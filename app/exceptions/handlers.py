@@ -1,6 +1,10 @@
+import logging
+import traceback
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class AppException(Exception):
@@ -19,4 +23,13 @@ async def app_exception_handler(request: Request, exc: AppException):
     return JSONResponse(
         status_code=exc.status_code,
         content={"success": False, "message": exc.message, "data": exc.data},
+    )
+
+
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled Exception: {str(exc)}")
+    logger.error(traceback.format_exc())
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"success": False, "message": "Internal Server Error"},
     )
