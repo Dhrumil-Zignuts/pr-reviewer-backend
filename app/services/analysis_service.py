@@ -1,5 +1,6 @@
 from typing import Optional
 import re
+import logging
 import asyncio
 from typing import Dict, Any, List
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,8 @@ from app.services.user_system_prompt_service import user_system_prompt_service
 from app.schemas.analysis import AnalysisCreate, AnalysisReviewCreate, AnalysisUpdate
 from app.models.analysis import Analysis, AnalysisReview
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
 
 
 class AnalysisService:
@@ -164,9 +167,13 @@ class AnalysisService:
                     return
 
                 analysis_update = AnalysisUpdate(
-                    overall_summary=overall_review["overall_summary"],
-                    overall_risk_score=overall_review["overall_risk_score"],
-                    final_recommendation=overall_review["final_recommendation"],
+                    overall_summary=overall_review.get(
+                        "overall_summary", "No summary provided."
+                    ),
+                    overall_risk_score=overall_review.get("overall_risk_score", 0.0),
+                    final_recommendation=overall_review.get(
+                        "final_recommendation", "N/A"
+                    ),
                     status="completed",
                 )
                 await analysis_repository.update(
@@ -174,16 +181,28 @@ class AnalysisService:
                 )
 
                 # 9. Store Child Reviews
-                reviews_in = [
-                    AnalysisReviewCreate(
-                        analysis_id=db_analysis.id,
-                        filename=all_chunks[i]["filename"],
-                        summary=review["summary"],
-                        issues=review.get("issues", []),
-                        risk_score=review["risk_score"],
+                reviews_in = []
+                for i, review in enumerate(chunk_reviews):
+                    raw_issues = review.get("issues", [])
+                    sanitized_issues = []
+                    if isinstance(raw_issues, list):
+                        for issue in raw_issues:
+                            if isinstance(issue, dict):
+                                sanitized_issues.append(issue)
+                            elif isinstance(issue, str):
+                                sanitized_issues.append(
+                                    {"description": issue, "snippet": ""}
+                                )
+
+                    reviews_in.append(
+                        AnalysisReviewCreate(
+                            analysis_id=db_analysis.id,
+                            filename=all_chunks[i]["filename"],
+                            summary=review.get("summary", "No summary provided."),
+                            issues=sanitized_issues,
+                            risk_score=review.get("risk_score", 0.0),
+                        )
                     )
-                    for i, review in enumerate(chunk_reviews)
-                ]
                 await analysis_repository.create_reviews(db, objs_in=reviews_in)
 
             except Exception as e:

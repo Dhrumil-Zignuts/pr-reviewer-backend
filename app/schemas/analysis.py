@@ -28,7 +28,7 @@ class AnalysisUpdate(BaseModel):
 
 class AnalysisIssue(BaseModel):
     description: str
-    snippet: str
+    snippet: str = ""
 
 
 class AnalysisReviewBase(BaseModel):
