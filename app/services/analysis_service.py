@@ -5,6 +5,7 @@ from typing import Dict, Any, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
 
+from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.services.github_service import github_service
 from app.services.ai_service import ai_service
@@ -16,6 +17,32 @@ from app.models.user import User
 
 
 class AnalysisService:
+    @staticmethod
+    def parse_github_url(url: str) -> Dict[str, Any]:
+        """Parses a GitHub URL and extracts repo components or PR components."""
+        # Check for PR URL first (more specific)
+        pr_pattern = r"https://github\.com/([^/]+)/([^/]+)/pull/(\d+)"
+        pr_match = re.match(pr_pattern, url)
+        if pr_match:
+            return {
+                "type": "pr",
+                "owner": pr_match.group(1),
+                "repo": pr_match.group(2),
+                "pull_number": int(pr_match.group(3)),
+            }
+
+        # Check for Repo URL
+        repo_pattern = r"https://github\.com/([^/]+)/([^/]+)"
+        repo_match = re.match(repo_pattern, url)
+        if repo_match:
+            return {
+                "type": "repo",
+                "owner": repo_match.group(1),
+                "repo": repo_match.group(2),
+            }
+
+        raise HTTPException(status_code=400, detail="Invalid GitHub URL.")
+
     @staticmethod
     def parse_github_pr_url(url: str) -> Dict[str, Any]:
         """Validates and extracts owner, repo, and pull number from a GitHub PR URL."""
@@ -42,19 +69,36 @@ class AnalysisService:
             repo_owner=pr_data["owner"],
             repo_name=pr_data["repo"],
             pull_number=pr_data["pull_number"],
-            status="in_progress",
+            status="pending",
         )
         return await analysis_repository.create(db, obj_in=analysis_in)
 
-    async def perform_analysis_task(self, analysis_id: int, user: User, pr_url: str):
-        """Background task to perform the full PR analysis."""
+    async def perform_analysis_task(self, analysis_id: int, user_id: int, pr_url: str):
+        """Background task to perform the full PR analysis with batch processing."""
         async with AsyncSessionLocal() as db:
             try:
-                # 1. Parse URL
-                pr_data = self.parse_github_pr_url(pr_url)
+                # 0. Set status to in_progress
+                db_analysis = await analysis_repository.get(db, id=analysis_id)
+                if db_analysis:
+                    await analysis_repository.update(
+                        db, db_obj=db_analysis, obj_in={"status": "in_progress"}
+                    )
+
+                # 1. Fetch User and Parse URL
+                from app.repositories.user_repository import user_repository
+
+                user = await user_repository.get(db, id=user_id)
+                if not user:
+                    logger.error(f"User {user_id} not found for analysis {analysis_id}")
+                    return
+
+                pr_data = self.parse_github_url(pr_url)
                 owner = pr_data["owner"]
                 repo = pr_data["repo"]
-                pull_number = pr_data["pull_number"]
+                pull_number = pr_data.get("pull_number")
+
+                if not pull_number:
+                    raise Exception("Analysis requires a Pull Request URL.")
 
                 # 2. Fetch User System Prompt
                 user_prompt_obj = await user_system_prompt_service.get_prompt(
@@ -76,29 +120,38 @@ class AnalysisService:
                 if not files:
                     raise Exception("No files found in this Pull Request.")
 
-                # 5. Process Files and Patch Content
-                analysis_tasks = []
-                file_metadata = []
-
+                # 5. Filter files with patches
+                all_chunks = []
                 for file in files:
                     filename = file.get("filename")
                     patch = file.get("patch")
-                    if not patch:
-                        continue
-                    analysis_tasks.append(
-                        ai_service.analyze_chunk(
-                            filename, patch, system_prompt=system_prompt
-                        )
-                    )
-                    file_metadata.append(filename)
+                    if patch:
+                        all_chunks.append({"filename": filename, "patch": patch})
 
-                if not analysis_tasks:
+                if not all_chunks:
                     raise Exception(
                         "No relevant code changes (patch data) found in PR."
                     )
 
-                # 6. Run AI Analysis in parallel
-                chunk_reviews = await asyncio.gather(*analysis_tasks)
+                # 6. Process in batches
+                chunk_reviews = []
+                batch_size = settings.AI_BATCH_SIZE
+
+                for i in range(0, len(all_chunks), batch_size):
+                    batch = all_chunks[i : i + batch_size]
+                    batch_tasks = [
+                        ai_service.analyze_chunk(
+                            item["filename"], item["patch"], system_prompt=system_prompt
+                        )
+                        for item in batch
+                    ]
+                    # Process current batch in parallel
+                    batch_results = await asyncio.gather(*batch_tasks)
+                    chunk_reviews.extend(batch_results)
+
+                    # Yield control back to the event loop between batches
+                    # to prevent blocking other concurrent API requests.
+                    await asyncio.sleep(0)
 
                 # 7. Aggregate results
                 overall_review = await ai_service.aggregate_reviews(
@@ -121,17 +174,20 @@ class AnalysisService:
                 )
 
                 # 9. Store Child Reviews
-                for i, review in enumerate(chunk_reviews):
-                    review_in = AnalysisReviewCreate(
+                reviews_in = [
+                    AnalysisReviewCreate(
                         analysis_id=db_analysis.id,
-                        filename=file_metadata[i],
+                        filename=all_chunks[i]["filename"],
                         summary=review["summary"],
                         issues=review.get("issues", []),
                         risk_score=review["risk_score"],
                     )
-                    await analysis_repository.create_review(db, obj_in=review_in)
+                    for i, review in enumerate(chunk_reviews)
+                ]
+                await analysis_repository.create_reviews(db, objs_in=reviews_in)
 
             except Exception as e:
+                logger.error(f"Analysis {analysis_id} failed: {str(e)}")
                 db_analysis = await analysis_repository.get(db, id=analysis_id)
                 if db_analysis:
                     await analysis_repository.update(
@@ -156,19 +212,27 @@ class AnalysisService:
         )
 
     async def get_user_history(
-        self, db: AsyncSession, user_id: int, pr_url: Optional[str] = None
-    ) -> List[Analysis]:
-        """Retrieves the history of analyses for a given user, optionally filtered by PR URL."""
-        if pr_url:
-            pr_data = self.parse_github_pr_url(pr_url)
+        self, db: AsyncSession, user_id: int, url: Optional[str] = None
+    ) -> List[Any]:
+        """Retrieves history, optionally grouped or filtered by Repo/PR URL."""
+        if not url:
+            return await analysis_repository.get_user_history_grouped(
+                db, user_id=user_id
+            )
+
+        url_data = self.parse_github_url(url)
+        if url_data["type"] == "pr":
             return await analysis_repository.get_user_history_by_pr(
                 db,
                 user_id=user_id,
-                owner=pr_data["owner"],
-                repo=pr_data["repo"],
-                pull_number=pr_data["pull_number"],
+                owner=url_data["owner"],
+                repo=url_data["repo"],
+                pull_number=url_data["pull_number"],
             )
-        return await analysis_repository.get_user_history(db, user_id=user_id)
+        else:  # repo
+            return await analysis_repository.get_user_history_by_repo(
+                db, user_id=user_id, owner=url_data["owner"], repo=url_data["repo"]
+            )
 
     async def get_reviews(
         self, db: AsyncSession, analysis_id: int

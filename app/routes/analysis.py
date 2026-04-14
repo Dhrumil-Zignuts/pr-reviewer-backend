@@ -1,17 +1,19 @@
+import asyncio
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.core.deps import get_current_user
 from app.models.user import User
+from typing import List, Union
+from app.services.analysis_service import analysis_service
 from app.schemas.analysis import (
     PRAnalysisRequest,
     AnalysisStatusResponse,
     AnalysisNotificationUpdate,
     AnalysisReviewResponse,
+    AnalysisHistoryGrouped,
 )
-from typing import List
-from app.services.analysis_service import analysis_service
 
 router = APIRouter()
 
@@ -19,7 +21,6 @@ router = APIRouter()
 @router.post("/analyze", response_model=AnalysisStatusResponse)
 async def analyze_pr_endpoint(
     request: PRAnalysisRequest,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -28,12 +29,14 @@ async def analyze_pr_endpoint(
         db, current_user, str(request.pr_url)
     )
 
-    # 2. Add background task
-    background_tasks.add_task(
-        analysis_service.perform_analysis_task,
-        db_analysis.id,
-        current_user,
-        str(request.pr_url),
+    # 2. Add background task using asyncio.create_task
+    # This fires off the task immediately on the current event loop.
+    asyncio.create_task(
+        analysis_service.perform_analysis_task(
+            db_analysis.id,
+            current_user.id,
+            str(request.pr_url),
+        )
     )
 
     # 3. Return initial status
@@ -67,15 +70,18 @@ async def update_notified_status_endpoint(
     return db_analysis
 
 
-@router.get("/history", response_model=List[AnalysisStatusResponse])
+@router.get(
+    "/history",
+    response_model=Union[List[AnalysisStatusResponse], List[AnalysisHistoryGrouped]],
+)
 async def get_analysis_history_endpoint(
     pr_url: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Retrieves the analysis history for the current user, optionally filtered by repo URL."""
+    """Retrieves the analysis history for the current user, optionally filtered by repo/PR URL."""
     return await analysis_service.get_user_history(
-        db, user_id=current_user.id, pr_url=pr_url
+        db, user_id=current_user.id, url=pr_url
     )
 
 

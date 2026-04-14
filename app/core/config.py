@@ -44,7 +44,8 @@ class Settings(BaseSettings):
 
     # AI Settings
     GEMINI_API_KEY: Optional[str] = None
-    AI_MODEL: str = "gemini-1.5-flash"
+    AI_MODEL: str = "gemini-3.1-flash-lite-preview"
+    AI_BATCH_SIZE: int = 3
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 

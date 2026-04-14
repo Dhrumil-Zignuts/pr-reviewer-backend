@@ -8,6 +8,7 @@ from sqlalchemy import (
     Text,
     JSON,
     Boolean,
+    Index,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -16,6 +17,16 @@ from app.models.base import Base
 
 class Analysis(Base):
     __tablename__ = "analyses"
+    __table_args__ = (
+        Index(
+            "idx_analyses_user_repo_pr",
+            "user_id",
+            "repo_owner",
+            "repo_name",
+            "pull_number",
+            "created_at",
+        ),
+    )
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)

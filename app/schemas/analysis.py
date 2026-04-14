@@ -74,5 +74,18 @@ class AnalysisStatusResponse(AnalysisBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AnalysisHistoryGrouped(BaseModel):
+    repo_owner: str
+    repo_name: str
+    pull_number: int
+    last_analysis_at: datetime
+    analysis_count: int
+    latest_status: str
+    latest_risk_score: Optional[float] = None
+    latest_analysis_id: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class AnalysisNotificationUpdate(BaseModel):
     is_notified: bool

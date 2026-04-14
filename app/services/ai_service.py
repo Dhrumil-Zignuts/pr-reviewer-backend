@@ -1,5 +1,6 @@
 import logging
 import json
+import asyncio
 from google import genai
 from google.genai import types
 from typing import List, Dict, Any
@@ -23,9 +24,9 @@ class AIService:
         return [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)]
 
     async def analyze_chunk(
-        self, filename: str, patch: str, system_prompt: str = None
+        self, filename: str, patch: str, system_prompt: str = None, retries: int = 3
     ) -> Dict[str, Any]:
-        """Analyzes a single chunk of code diff using Gemini AI."""
+        """Analyzes a single chunk of code diff using Gemini AI with retries."""
         if not self.client:
             return self._mock_review(filename)
 
@@ -59,23 +60,31 @@ class AIService:
         {patch}
         """
 
-        try:
-            response = await self.client.aio.models.generate_content(
-                model=self.model_id,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                ),
-            )
-            return json.loads(response.text)
-        except Exception as e:
-            logger.error(f"Error calling Gemini API for {filename}: {str(e)}")
-            return self._mock_review(filename, error=str(e))
+        for attempt in range(retries):
+            try:
+                response = await self.client.aio.models.generate_content(
+                    model=self.model_id,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    ),
+                )
+                return json.loads(response.text)
+            except Exception as e:
+                logger.error(
+                    f"Error calling Gemini API for {filename} (attempt {attempt + 1}/{retries}): {str(e)}"
+                )
+                if attempt == retries - 1:
+                    return self._mock_review(filename, error=str(e))
+                await asyncio.sleep(2**attempt)  # Exponential backoff
 
     async def aggregate_reviews(
-        self, chunk_reviews: List[Dict[str, Any]], system_prompt: str = None
+        self,
+        chunk_reviews: List[Dict[str, Any]],
+        system_prompt: str = None,
+        retries: int = 3,
     ) -> Dict[str, Any]:
-        """Generates a final overall review from all chunks using Gemini AI."""
+        """Generates a final overall review from all chunks using Gemini AI with retries."""
         if not self.client or not chunk_reviews:
             return self._mock_aggregation(chunk_reviews)
 
@@ -103,18 +112,23 @@ class AIService:
         {reviews_json}
         """
 
-        try:
-            response = await self.client.aio.models.generate_content(
-                model=self.model_id,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                ),
-            )
-            return json.loads(response.text)
-        except Exception as e:
-            logger.error(f"Error calling Gemini API for aggregation: {str(e)}")
-            return self._mock_aggregation(chunk_reviews)
+        for attempt in range(retries):
+            try:
+                response = await self.client.aio.models.generate_content(
+                    model=self.model_id,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    ),
+                )
+                return json.loads(response.text)
+            except Exception as e:
+                logger.error(
+                    f"Error calling Gemini API for aggregation (attempt {attempt + 1}/{retries}): {str(e)}"
+                )
+                if attempt == retries - 1:
+                    return self._mock_aggregation(chunk_reviews)
+                await asyncio.sleep(2**attempt)  # Exponential backoff
 
     def _mock_review(self, filename: str, error: str = None) -> Dict[str, Any]:
         """Fallback mock if API fails or key is missing."""
