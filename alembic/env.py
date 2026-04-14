@@ -10,6 +10,8 @@ from app.models.base import Base
 
 # Import all models for Alembic to see them
 from app.models.user import User
+from app.models.user_system_prompt import UserSystemPrompt
+from app.models.analysis import Analysis, AnalysisReview
 
 config = context.config
 if config.config_file_name is not None:

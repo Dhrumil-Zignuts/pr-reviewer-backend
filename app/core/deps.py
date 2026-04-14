@@ -30,6 +30,13 @@ async def get_current_user(
     user = await user_repository.get(db, id=token_data.sub)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # Validate that the token is the current one (implements logout invalidation)
+    if user.jwt_access_token != token.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired or logged out. Please login again.",
+        )
     return user
 
 

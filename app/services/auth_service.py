@@ -54,7 +54,23 @@ class AuthService:
             }
             user = await user_repository.update(db, db_obj=user, obj_in=update_data)
 
-        return security.create_access_token(user.id)
+        # Generate JWT Access Token
+        jwt_token = security.create_access_token(user.id)
+
+        # Store the issued JWT back to the database
+        await user_repository.update(
+            db, db_obj=user, obj_in={"jwt_access_token": jwt_token}
+        )
+
+        return jwt_token
+
+    async def logout(self, db: AsyncSession, user_id: int):
+        """Invalidates the current session by clearing the stored JWT token."""
+        user = await user_repository.get(db, id=user_id)
+        if user:
+            await user_repository.update(
+                db, db_obj=user, obj_in={"jwt_access_token": None}
+            )
 
 
 auth_service = AuthService()

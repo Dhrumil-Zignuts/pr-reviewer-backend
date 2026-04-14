@@ -17,12 +17,14 @@ class UserCreate(UserBase):
     github_access_token: Optional[str] = None
     github_refresh_token: Optional[str] = None
     github_token_expires_at: Optional[datetime] = None
+    jwt_access_token: Optional[str] = None
 
 
 class UserUpdate(UserBase):
     github_access_token: Optional[str] = None
     github_refresh_token: Optional[str] = None
     github_token_expires_at: Optional[datetime] = None
+    jwt_access_token: Optional[str] = None
 
 
 class UserInDBBase(UserBase):

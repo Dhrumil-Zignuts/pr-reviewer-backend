@@ -6,7 +6,9 @@ from app.db.session import get_db
 from app.services.github_service import github_service
 from app.services.auth_service import auth_service
 from app.core.config import settings
-from app.schemas.auth import Token
+from app.core.deps import get_current_user
+from app.models.user import User
+from app.schemas.auth import Token, GitHubTokenLoginRequest
 
 router = APIRouter()
 
@@ -22,10 +24,7 @@ async def github_login():
 @router.get("/github/callback", response_model=Token)
 async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
     token_data = await github_service.get_access_token(code)
-    logger.info(f"Token data: {token_data}")
     access_token = token_data.get("access_token")
-    logger.info(f"Access token: {access_token}")
-
     if not access_token:
         raise HTTPException(
             status_code=400, detail="Failed to retrieve access token from GitHub"
@@ -33,7 +32,6 @@ async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
 
     # Validate that required scopes were granted
     granted_scopes = token_data.get("scope", "").split(",")
-    logger.info(f"Granted scopes: {granted_scopes}")
     if "repo" not in granted_scopes:
         raise HTTPException(
             status_code=400,
@@ -41,8 +39,28 @@ async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
         )
 
     github_user = await github_service.get_user_profile(access_token)
-    logger.info(f"GitHub user: {github_user}")
     jwt_token = await auth_service.authenticate_github_user(db, github_user, token_data)
-    logger.info(f"JWT token: {jwt_token}")
-
     return {"access_token": jwt_token, "token_type": "bearer"}
+
+
+@router.post("/github/token-login", response_model=Token)
+async def github_token_login(
+    request: GitHubTokenLoginRequest, db: AsyncSession = Depends(get_db)
+):
+    """Authenticates a user directly using a GitHub personal access token."""
+    github_user = await github_service.get_user_profile(request.github_token)
+
+    # For direct token login, we don't have refresh_token or expires_in from an OAuth flow
+    token_data = {"access_token": request.github_token}
+
+    jwt_token = await auth_service.authenticate_github_user(db, github_user, token_data)
+    return {"access_token": jwt_token, "token_type": "bearer"}
+
+
+@router.post("/logout")
+async def logout(
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)
+):
+    """Invalidates the current session."""
+    await auth_service.logout(db, user_id=current_user.id)
+    return {"message": "Successfully logged out"}

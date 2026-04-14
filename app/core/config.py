@@ -42,6 +42,14 @@ class Settings(BaseSettings):
     REDIS_PORT: int
     REDIS_DB: int
 
+    # AI Settings
+    AI_PROVIDER: str = "gemini"  # "gemini" or "openai"
+    GEMINI_API_KEY: Optional[str] = None
+    OPENAI_API_KEY: Optional[str] = None
+    GEMINI_MODEL: str = "gemini-3.1-flash-lite-preview"
+    OPENAI_MODEL: str = "gpt-4-turbo"
+    AI_BATCH_SIZE: int = 10
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
 

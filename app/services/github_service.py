@@ -103,5 +103,21 @@ class GitHubService:
         data = response.json()
         return GitHubUser(**data)
 
+    async def get_pull_request_files(
+        self, access_token: str, owner: str, repo: str, pull_number: int
+    ) -> list:
+        url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}/files"
+        response = await self._client.get(
+            url,
+            headers={
+                "Authorization": f"token {access_token}",
+                "Accept": "application/vnd.github.v3+json",
+            },
+        )
+        if response.status_code != 200:
+            logger.error(f"Failed to fetch PR files: {response.text}")
+            return []
+        return response.json()
+
 
 github_service = GitHubService()
